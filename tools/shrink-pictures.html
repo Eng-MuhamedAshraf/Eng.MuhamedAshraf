@@ -1,0 +1,334 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Shrink portfolio pictures</title>
+<style>
+:root{color-scheme:dark}
+body{margin:0;background:#121B20;color:#F2F0EB;font:16px/1.55 "Segoe UI",system-ui,sans-serif;padding:40px 20px}
+main{max-width:760px;margin:0 auto}
+h1{font-size:28px;margin:0 0 6px}
+p{color:#BCC4C8;margin:6px 0}
+.box{background:#1F2C33;border:1px solid #5A676B;border-radius:12px;padding:18px 20px;margin:18px 0}
+.box strong{font-size:18px}
+.drop{border:2px dashed #5A676B;border-radius:10px;padding:22px;text-align:center;margin-top:12px;transition:border-color .2s,background .2s}
+.drop.over{border-color:#C98A6E;background:rgba(201,138,110,.08)}
+.btns{display:flex;gap:10px;flex-wrap:wrap;justify-content:center;margin-top:12px}
+button,.btn,label.pick{display:inline-block;background:#C98A6E;color:#121B20;border:0;border-radius:6px;padding:11px 18px;font:inherit;font-weight:700;cursor:pointer;text-decoration:none}
+button.ghost{background:transparent;color:#F2F0EB;border:1px solid #98A2A3}
+button:disabled{opacity:.4;cursor:default}
+input[type=file]{display:none}
+select{font:inherit;padding:6px;background:#121B20;color:#F2F0EB;border:1px solid #5A676B;border-radius:6px}
+input[type=range]{accent-color:#C98A6E;width:200px}
+progress{width:100%;height:14px;accent-color:#C98A6E}
+.row{display:flex;gap:28px;flex-wrap:wrap}
+.lab{display:block;margin:10px 0 4px;color:#BCC4C8}
+#summary{margin-top:12px;color:#F2F0EB}
+#log{font:13px/1.5 Consolas,monospace;color:#DDA98F;max-height:220px;overflow:auto;white-space:pre-wrap;margin-top:8px}
+</style>
+</head>
+<body>
+<main>
+<h1>Shrink portfolio pictures</h1>
+<p>Makes small copies of your pictures (150 DPI by default), so the portfolio fits on GitHub and loads fast. Everything happens on your PC, nothing is uploaded. Use Chrome or Edge.</p>
+
+<div class="box">
+  <strong>1. Add pictures</strong>
+  <p>Add any of these, as many times as you like: single pictures, a project folder, a sub-folder (like HVAC), or your whole “The Portofolio” folder. The tool knows every picture of the website and puts each one in its right folder.</p>
+  <div class="drop" id="drop">
+    Drag pictures or folders here
+    <div class="btns">
+      <label class="pick" for="pickFiles">Choose pictures</label>
+      <label class="pick" for="pickFolder">Choose a folder</label>
+      <button class="ghost" id="clear" type="button">Clear list</button>
+    </div>
+  </div>
+  <input type="file" id="pickFiles" multiple accept=".png,.jpg,.jpeg">
+  <input type="file" id="pickFolder" webkitdirectory multiple>
+  <div id="summary">No pictures added yet.</div>
+</div>
+
+<div class="box">
+  <strong>2. Settings</strong>
+  <div class="row">
+    <div><label class="lab" for="dpi">Resolution</label>
+      <select id="dpi"><option value="0">Keep original</option><option value="100">100 DPI</option><option value="150" selected>150 DPI</option><option value="200">200 DPI</option><option value="300">300 DPI</option></select></div>
+    <div><label class="lab" for="assume">If a picture has no DPI saved, treat it as</label>
+      <select id="assume"><option value="300" selected>300 DPI (common export)</option><option value="200">200 DPI</option><option value="600">600 DPI</option><option value="0">Don’t resize it</option></select></div>
+  </div>
+  <div class="row">
+    <div><label class="lab" for="max">Longest side limit (optional)</label>
+      <select id="max"><option value="0" selected>No limit</option><option value="2800">2800 px</option><option value="3600">3600 px</option><option value="5000">5000 px</option></select></div>
+    <div><label class="lab" for="q">Quality: <span id="qv">82</span></label><input type="range" id="q" min="60" max="95" value="82"></div>
+  </div>
+  <p>The DPI is read from each picture (Revit and most programs save it). A picture is only made smaller, never bigger.</p>
+</div>
+
+<div class="box">
+  <strong>3. Shrink</strong>
+  <p><button id="go" type="button" disabled>Shrink pictures</button></p>
+  <progress id="bar" value="0" max="1"></progress>
+  <p id="status">Add pictures first.</p>
+  <p><a id="dl" class="btn" hidden>Download portfolio-pictures.zip</a></p>
+  <div id="log"></div>
+</div>
+
+<div class="box">
+  <strong>4. Then</strong>
+  <p>Unzip <b>portfolio-pictures.zip</b>. Inside are the folders <b>Projects PNGs</b>, <b>Certifications</b> and <b>Personal image</b> (only the ones you added), with the exact names the website expects. Upload them to GitHub, or put them next to index.html on your PC. Pictures that are not on the website yet are in a folder called <b>Not on the website yet</b>.</p>
+</div>
+</main>
+
+<script src="../assets/js/data.js"></script>
+<script>
+/*ZIP-START*/
+/* A tiny ZIP writer (files are stored as they are: WebP is already compressed). */
+var CRC_TABLE = (function () {
+  var t = new Uint32Array(256);
+  for (var n = 0; n < 256; n++) { var c = n; for (var k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1); t[n] = c >>> 0; }
+  return t;
+})();
+function crc32(data) {
+  var c = 0xFFFFFFFF;
+  for (var i = 0; i < data.length; i++) c = CRC_TABLE[(c ^ data[i]) & 0xFF] ^ (c >>> 8);
+  return (c ^ 0xFFFFFFFF) >>> 0;
+}
+function ZipWriter() { this.parts = []; this.entries = []; this.offset = 0; }
+ZipWriter.prototype.add = function (name, data) {
+  var nameBytes = new TextEncoder().encode(name), crc = crc32(data), now = new Date();
+  var time = (now.getHours() << 11) | (now.getMinutes() << 5) | (now.getSeconds() >> 1);
+  var date = ((now.getFullYear() - 1980) << 9) | ((now.getMonth() + 1) << 5) | now.getDate();
+  var h = new DataView(new ArrayBuffer(30));
+  h.setUint32(0, 0x04034b50, true); h.setUint16(4, 20, true); h.setUint16(6, 0x0800, true); h.setUint16(8, 0, true);
+  h.setUint16(10, time, true); h.setUint16(12, date, true); h.setUint32(14, crc, true);
+  h.setUint32(18, data.length, true); h.setUint32(22, data.length, true); h.setUint16(26, nameBytes.length, true); h.setUint16(28, 0, true);
+  this.parts.push(h.buffer, nameBytes, data);
+  this.entries.push({ nameBytes: nameBytes, crc: crc, size: data.length, offset: this.offset, time: time, date: date });
+  this.offset += 30 + nameBytes.length + data.length;
+};
+ZipWriter.prototype.finish = function () {
+  var cd = [], cdSize = 0;
+  this.entries.forEach(function (e) {
+    var c = new DataView(new ArrayBuffer(46));
+    c.setUint32(0, 0x02014b50, true); c.setUint16(4, 20, true); c.setUint16(6, 20, true); c.setUint16(8, 0x0800, true); c.setUint16(10, 0, true);
+    c.setUint16(12, e.time, true); c.setUint16(14, e.date, true); c.setUint32(16, e.crc, true);
+    c.setUint32(20, e.size, true); c.setUint32(24, e.size, true); c.setUint16(28, e.nameBytes.length, true);
+    c.setUint16(30, 0, true); c.setUint16(32, 0, true); c.setUint16(34, 0, true); c.setUint16(36, 0, true); c.setUint32(38, 0, true); c.setUint32(42, e.offset, true);
+    cd.push(c.buffer, e.nameBytes); cdSize += 46 + e.nameBytes.length;
+  });
+  var end = new DataView(new ArrayBuffer(22));
+  end.setUint32(0, 0x06054b50, true); end.setUint16(4, 0, true); end.setUint16(6, 0, true);
+  end.setUint16(8, this.entries.length, true); end.setUint16(10, this.entries.length, true);
+  end.setUint32(12, cdSize, true); end.setUint32(16, this.offset, true); end.setUint16(20, 0, true);
+  return new Blob(this.parts.concat(cd, [end.buffer]), { type: 'application/zip' });
+};
+/*ZIP-END*/
+
+/*MATCH-START*/
+/* Every picture the website uses, from assets/js/data.js */
+var EXPECTED = [], BY_NAME = {};
+function addExpected(path) {
+  var e = { path: path, segs: path.toLowerCase().split('/') };
+  EXPECTED.push(e);
+  var n = e.segs[e.segs.length - 1];
+  (BY_NAME[n] = BY_NAME[n] || []).push(e);
+}
+function loadExpected() {
+  if (typeof PROJECTS === 'undefined') return false;
+  PROJECTS.forEach(function (p) {
+    (function walk(groups) {
+      groups.forEach(function (g) {
+        (g.files || []).forEach(function (f) { addExpected('Projects PNGs/' + p.root + '/' + g.dir + '/' + f); });
+        walk(g.children || []);
+      });
+    })(p.groups);
+  });
+  (typeof CERTIFICATES !== 'undefined' ? CERTIFICATES : []).forEach(function (c) { addExpected('Certifications/' + c.file); });
+  addExpected('Personal image/M');
+  return true;
+}
+/* Finds where a picture belongs, from its name and the folders around it.
+   rel = "ASTER Mall/DRAIN/x.png", "HVAC/x.png" or just "x.png" */
+function placeFor(rel) {
+  var segs = rel.replace(/\\/g, '/').split('/').filter(Boolean).map(function (s) { return s.toLowerCase(); });
+  segs[segs.length - 1] = segs[segs.length - 1].replace(/\.(png|jpe?g|webp)$/i, '');
+  var cands = BY_NAME[segs[segs.length - 1]] || [];
+  if (!cands.length) return { status: 'other' };
+  var best = 0, hits = [];
+  cands.forEach(function (e) {
+    var L = 0;
+    while (L < segs.length && L < e.segs.length && segs[segs.length - 1 - L] === e.segs[e.segs.length - 1 - L]) L++;
+    if (L > best) { best = L; hits = [e]; } else if (L === best) hits.push(e);
+  });
+  if (hits.length === 1) return { status: 'ok', path: hits[0].path };
+  return { status: 'unclear', options: hits.map(function (e) { return e.path; }) };
+}
+/*MATCH-END*/
+
+var HAVE_DATA = loadExpected();
+var items = [], seen = {};
+function $(id) { return document.getElementById(id); }
+function mb(n) { return (n / 1048576).toFixed(1); }
+function log(t) { $('log').textContent += t + '\n'; }
+var WEBP = document.createElement('canvas').toDataURL('image/webp').indexOf('data:image/webp') === 0;
+var TYPE = WEBP ? 'image/webp' : 'image/jpeg', EXT = WEBP ? '.webp' : '.jpg';
+
+function addFiles(list) {
+  list.forEach(function (x) {
+    if (!/\.(png|jpe?g)$/i.test(x.file.name)) return;
+    var rel = (x.rel || x.file.name).replace(/\\/g, '/');
+    var place = HAVE_DATA ? placeFor(rel) : { status: 'other' };
+    var key = place.status === 'ok' ? place.path.toLowerCase() : rel.toLowerCase();
+    if (seen[key]) return;
+    seen[key] = true;
+    items.push({ file: x.file, rel: rel, place: place });
+  });
+  showSummary();
+}
+function showSummary() {
+  var ok = items.filter(function (i) { return i.place.status === 'ok'; });
+  var other = items.filter(function (i) { return i.place.status === 'other'; });
+  var unclear = items.filter(function (i) { return i.place.status === 'unclear'; });
+  var size = items.reduce(function (s, i) { return s + i.file.size; }, 0);
+  $('summary').textContent = items.length
+    ? items.length + ' pictures added (' + mb(size) + ' MB): ' + ok.length + ' placed in their website folders' +
+      (other.length ? ', ' + other.length + ' not on the website yet' : '') + (unclear.length ? ', ' + unclear.length + ' unclear (skipped, see below)' : '') + '.'
+    : 'No pictures added yet.';
+  $('log').textContent = '';
+  if (!HAVE_DATA) log('Note: assets/js/data.js was not found. Keep this tool inside the Portfolio "tools" folder so it can place the pictures.');
+  unclear.forEach(function (i) {
+    log('Unclear: ' + i.rel + ' (the same name is in ' + i.place.options.length + ' folders, e.g. ' + i.place.options.slice(0, 2).join(' and ') + '). Add its bigger folder instead.');
+  });
+  $('go').disabled = !(ok.length + other.length);
+  $('status').textContent = items.length ? 'Ready. Click “Shrink pictures”, or add more.' : 'Add pictures first.';
+  $('dl').hidden = true;
+}
+
+$('pickFiles').onchange = function () {
+  addFiles(Array.prototype.map.call(this.files, function (f) { return { file: f, rel: f.name }; })); this.value = '';
+};
+$('pickFolder').onchange = function () {
+  addFiles(Array.prototype.map.call(this.files, function (f) { return { file: f, rel: f.webkitRelativePath || f.name }; })); this.value = '';
+};
+$('clear').onclick = function () { items = []; seen = {}; showSummary(); };
+
+/* drag and drop of pictures and folders */
+function readEntry(entry, out) {
+  return new Promise(function (res) {
+    if (entry.isFile) {
+      entry.file(function (f) { out.push({ file: f, rel: entry.fullPath.replace(/^\//, '') }); res(); }, function () { res(); });
+    } else if (entry.isDirectory) {
+      var reader = entry.createReader(), all = [];
+      (function more() {
+        reader.readEntries(function (es) {
+          if (!es.length) { Promise.all(all.map(function (e) { return readEntry(e, out); })).then(function () { res(); }); }
+          else { all = all.concat(Array.prototype.slice.call(es)); more(); }
+        }, function () { res(); });
+      })();
+    } else res();
+  });
+}
+var drop = $('drop');
+['dragenter', 'dragover'].forEach(function (t) { drop.addEventListener(t, function (e) { e.preventDefault(); drop.classList.add('over'); }); });
+['dragleave', 'drop'].forEach(function (t) { drop.addEventListener(t, function () { drop.classList.remove('over'); }); });
+drop.addEventListener('drop', function (e) {
+  e.preventDefault();
+  var entries = Array.prototype.map.call(e.dataTransfer.items || [], function (it) { return it.webkitGetAsEntry && it.webkitGetAsEntry(); }).filter(Boolean);
+  if (!entries.length) { addFiles(Array.prototype.map.call(e.dataTransfer.files, function (f) { return { file: f, rel: f.name }; })); return; }
+  $('summary').textContent = 'Reading the dropped pictures...';
+  var out = [];
+  Promise.all(entries.map(function (en) { return readEntry(en, out); })).then(function () { addFiles(out); });
+});
+
+$('q').oninput = function () { $('qv').textContent = $('q').value; };
+
+/*DPI-START*/
+/* Reads the DPI saved in a PNG (pHYs chunk) or JPEG (JFIF header). 0 = not saved. */
+function readDpi(file) {
+  return file.slice(0, 262144).arrayBuffer().then(function (buf) {
+    var b = new DataView(buf), u = new Uint8Array(buf);
+    if (u[0] === 0x89 && u[1] === 0x50 && u[2] === 0x4E && u[3] === 0x47) {
+      var p = 8;
+      while (p + 8 <= u.length) {
+        var len = b.getUint32(p), type = String.fromCharCode(u[p + 4], u[p + 5], u[p + 6], u[p + 7]);
+        if (type === 'pHYs' && p + 17 <= u.length) { var x = b.getUint32(p + 8); return u[p + 16] === 1 && x ? Math.round(x * 0.0254) : 0; }
+        if (type === 'IDAT' || type === 'IEND') return 0;
+        p += 12 + len;
+      }
+      return 0;
+    }
+    if (u[0] === 0xFF && u[1] === 0xD8) {
+      var q = 2;
+      while (q + 14 < u.length && u[q] === 0xFF) {
+        var marker = u[q + 1], seg = b.getUint16(q + 2);
+        if (marker === 0xE0 && String.fromCharCode(u[q + 4], u[q + 5], u[q + 6], u[q + 7]) === 'JFIF') {
+          var units = u[q + 11], d = b.getUint16(q + 12);
+          return units === 1 ? d : units === 2 ? Math.round(d * 2.54) : 0;
+        }
+        if (marker === 0xDA) break;
+        q += 2 + seg;
+      }
+    }
+    return 0;
+  });
+}
+/* How much to shrink: to the target DPI, and below the optional side limit. Never enlarges. */
+function scaleFor(w, h, dpiFound, o) {
+  var src = dpiFound || o.assume, s = 1;
+  if (o.dpi && src && src > o.dpi) s = o.dpi / src;
+  if (o.maxSide) s = Math.min(s, o.maxSide / Math.max(w, h));
+  return Math.min(1, s);
+}
+/*DPI-END*/
+
+function shrink(file, o) {
+  return readDpi(file).then(function (dpi) {
+    return createImageBitmap(file).then(function (bmp) {
+      var s = scaleFor(bmp.width, bmp.height, dpi, o);
+      var w = Math.max(1, Math.round(bmp.width * s)), h = Math.max(1, Math.round(bmp.height * s));
+      var c = document.createElement('canvas'); c.width = w; c.height = h;
+      var g = c.getContext('2d');
+      if (TYPE === 'image/jpeg') { g.fillStyle = '#fff'; g.fillRect(0, 0, w, h); }
+      g.imageSmoothingEnabled = true; g.imageSmoothingQuality = 'high';
+      g.drawImage(bmp, 0, 0, w, h);
+      if (bmp.close) bmp.close();
+      return new Promise(function (res) { c.toBlob(res, TYPE, o.q); }).then(function (blob) {
+        c.width = c.height = 0;
+        return blob.arrayBuffer();
+      }).then(function (buf) { return { data: new Uint8Array(buf), dpi: dpi }; });
+    });
+  });
+}
+
+$('go').onclick = async function () {
+  var todo = items.filter(function (i) { return i.place.status !== 'unclear'; });
+  $('go').disabled = true; $('dl').hidden = true;
+  var o = { dpi: +$('dpi').value, assume: +$('assume').value, maxSide: +$('max').value, q: $('q').value / 100 };
+  var zip = new ZipWriter(), before = 0, after = 0, done = 0, failed = 0, dpis = {};
+  $('bar').max = todo.length; $('bar').value = 0;
+  for (var i = 0; i < todo.length; i++) {
+    var x = todo[i];
+    $('status').textContent = 'Working on ' + (i + 1) + ' of ' + todo.length + ': ' + x.rel;
+    try {
+      var r = await shrink(x.file, o);
+      var name = x.place.status === 'ok' ? x.place.path + EXT : 'Not on the website yet/' + x.rel.replace(/\.(png|jpe?g)$/i, EXT);
+      zip.add(name, r.data);
+      var k = r.dpi ? r.dpi + ' DPI' : 'no DPI saved';
+      dpis[k] = (dpis[k] || 0) + 1;
+      before += x.file.size; after += r.data.length; done++;
+    } catch (e) { failed++; log('Could not convert: ' + x.rel); }
+    $('bar').value = i + 1;
+    await new Promise(function (res) { setTimeout(res, 0); });
+  }
+  var a = $('dl');
+  a.href = URL.createObjectURL(zip.finish()); a.download = 'portfolio-pictures.zip'; a.hidden = false;
+  var found = Object.keys(dpis).map(function (k) { return dpis[k] + ' at ' + k; }).join(', ');
+  $('status').textContent = 'Done: ' + done + ' pictures, ' + mb(before) + ' MB → ' + mb(after) + ' MB.' + (failed ? ' ' + failed + ' could not be converted (listed below).' : '');
+  log('Original resolution: ' + found + (dpis['no DPI saved'] ? (o.assume ? ' (treated as ' + o.assume + ' DPI)' : ' (kept their size)') : '') + '.');
+  if (after > 300 * 1048576) log('The result is still over 300 MB, which may be too heavy for GitHub Pages. Try 100 DPI, or a longest side limit of 3600 px.');
+  $('go').disabled = false;
+};
+</script>
+</body>
+</html>
