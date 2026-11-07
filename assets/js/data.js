@@ -430,7 +430,7 @@ var PROJECTS = [
      "3D-01.1",
      "3D-02",
      "3D-05",
-     "Screenshot 2026-04-22 132952"
+     "Cover"
     ],
     "children": []
    }
