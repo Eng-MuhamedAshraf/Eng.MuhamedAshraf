@@ -115,7 +115,8 @@ function carousel(o) {
 /* ---------- Build the project and certificate cards from data.js ---------- */
 var EXTS = (typeof IMAGE_EXTENSIONS !== 'undefined') ? IMAGE_EXTENSIONS : [(typeof IMAGE_EXTENSION !== 'undefined') ? IMAGE_EXTENSION : '.png'];
 var PEXT = EXTS[0], CEXT = EXTS[0];   /* file type found for project pictures / certificates */
-function imgUrl(path, ext) { return encodeURI(path + (ext || PEXT)); }
+/* A name that already ends in .webp/.png/.jpg/.jpeg keeps its own type (e.g. a .jpeg cover among .webp drawings). */
+function imgUrl(path, ext) { return encodeURI(/\.(webp|png|jpe?g)$/i.test(path) ? path : path + (ext || PEXT)); }
 function el(tag, cls, text) { var e = document.createElement(tag); if (cls) e.className = cls; if (text) e.textContent = text; return e; }
 /* Tries addresses one after the other; the callback gets the index of the first one that loads, or -1. */
 function firstWorking(urls, cb) {
@@ -146,7 +147,9 @@ firstWorking(PHOTO_FILES.map(function (f) { return encodeURI(f); }), function (k
    the first one found (in folder order) is used. Otherwise the "cover" set in data.js is used. */
 function autoCover(p) {
   var found = null;
-  (function walk(groups) {
+  /* pictures placed directly in the project folder come first (e.g. "ASTER Cover.jpeg") */
+  (p.files || []).forEach(function (f) { if (!found && /cover/i.test(f)) found = f; });
+  if (!found) (function walk(groups) {
     groups.forEach(function (g) {
       if (found) return;
       (g.files || []).forEach(function (f) { if (!found && /cover/i.test(f)) found = g.dir + '/' + f; });
@@ -179,15 +182,22 @@ function findRoot(roots, firstPath, done) {
 }
 /* A project folder may also be doubled (ASTER Mall/ASTER Mall): both are accepted. */
 function rootChoices(p) { var last = p.root.split('/').pop(); return [p.root, p.root + '/' + last]; }
+/* a drawing of the project, used to find the folders and the file type */
+function probeFile(p) {
+  var f = null;
+  (function walk(gs) { gs.forEach(function (g) { if (f) return; if (g.files && g.files.length) f = g.dir + '/' + g.files[0]; else walk(g.children || []); }); })(p.groups);
+  return f || p.cover;
+}
 (function () {
   var p0 = PROJECTS[0], urls = [], pairs = [];
-  PROJECT_ROOTS.forEach(function (r) { rootChoices(p0).forEach(function (pr) { EXTS.forEach(function (x) { urls.push(imgUrl(r + pr + '/' + p0.cover, x)); pairs.push([r, x]); }); }); });
+  PROJECT_ROOTS.forEach(function (r) { rootChoices(p0).forEach(function (pr) { EXTS.forEach(function (x) { urls.push(imgUrl(r + pr + '/' + probeFile(p0), x)); pairs.push([r, x]); }); }); });
   firstWorking(urls, function (k) {
     if (k >= 0) { PROJECT_ROOT = pairs[k][0]; PEXT = pairs[k][1]; }
     PROJECTS.forEach(function (p, i) {
       var ch = rootChoices(p);
-      firstWorking(ch.map(function (pr) { return imgUrl(PROJECT_ROOT + pr + '/' + p.cover); }), function (j) {
-        if (j >= 0) { p.root = ch[j]; setImage(coverBoxes[i], imgUrl(PROJECT_ROOT + p.root + '/' + p.cover), p.title); }
+      firstWorking(ch.map(function (pr) { return imgUrl(PROJECT_ROOT + pr + '/' + probeFile(p)); }), function (j) {
+        if (j >= 0) p.root = ch[j];
+        if (p.cover) setImage(coverBoxes[i], imgUrl(PROJECT_ROOT + p.root + '/' + p.cover), p.title);
       });
     });
   });
