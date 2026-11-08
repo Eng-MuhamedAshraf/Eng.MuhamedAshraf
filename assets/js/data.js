@@ -13,8 +13,8 @@
    place / company / role are optional: leave '' or [] to hide them. */
 var PROJECTS = [
  {
-  "title": "ASTER Mall",
-  "root": "ASTER",
+  "title": "ASTER",
+  "root": "ASTER Mall",
   "place": "Egypt",
   "company": "MAAP Electro-Mechanical Engineers",
   "role": [
