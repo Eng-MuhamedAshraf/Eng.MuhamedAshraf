@@ -60,6 +60,16 @@ def pick(roots, first):
     return roots[0]
 
 
+def withext(path, x):
+    return path if re.search(r"\.(webp|png|jpe?g)$", path, re.I) else path + x
+
+
+def first_file(p):
+    for d, f in (pair for g in p["groups"] for pair in files_of(g)):
+        return d + "/" + f
+    return p["cover"]
+
+
 def files_of(g):
     for f in g.get("files", []):
         yield g["dir"], f
@@ -69,16 +79,16 @@ def files_of(g):
 
 projects, certs = grab("PROJECTS"), grab("CERTIFICATES")
 p0 = projects[0]
-proot, ext = next(((r, x) for r in project_roots for pr in (p0["root"], p0["root"] + "/" + p0["root"].split("/")[-1]) for x in exts if check(r + pr + "/" + p0["cover"] + x) is None), (project_roots[0], exts[0]))
+proot, ext = next(((r, x) for r in project_roots for pr in (p0["root"], p0["root"] + "/" + p0["root"].split("/")[-1]) for x in exts if check(r + pr + "/" + first_file(p0) + x) is None), (project_roots[0], exts[0]))
 croot, cext = next(((r, x) for r in cert_roots for x in exts if check(r + certs[0]["file"] + x) is None), (cert_roots[0], exts[0]))
 print("Project pictures are read from:", proot, "(" + ext + " files)")
 print("Certificates are read from:    ", croot, "(" + cext + " files)\n")
 problems = total = 0
 for p in projects:
     choices = [p["root"], p["root"] + "/" + p["root"].split("/")[-1]]
-    root = next((r for r in choices if check(proot + r + "/" + p["cover"] + ext) is None), p["root"])
+    root = next((r for r in choices if check(proot + r + "/" + withext(first_file(p), ext)) is None), p["root"])
     base = proot + root + "/"
-    items = [base + p["cover"] + ext] + [base + d + "/" + f + ext for g in p["groups"] for d, f in files_of(g)]
+    items = [withext(base + p["cover"], ext)] + [withext(base + f, ext) for f in p.get("files", [])] + [base + d + "/" + f + ext for g in p["groups"] for d, f in files_of(g)]
     bad = [(i, check(i)) for i in items]
     bad = [(i, why) for i, why in bad if why]
     total += len(items)

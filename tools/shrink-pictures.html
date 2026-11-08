@@ -70,13 +70,14 @@ progress{width:100%;height:14px;accent-color:#C98A6E}
   <p><button id="go" type="button" disabled>Shrink pictures</button></p>
   <progress id="bar" value="0" max="1"></progress>
   <p id="status">Add pictures first.</p>
-  <p><a id="dl" class="btn" hidden>Download portfolio-pictures.zip</a></p>
+  <p><a id="dl" class="btn" hidden>Download portfolio-pictures.zip</a> <a id="dlData" class="btn" hidden>Download updated data.js</a></p>
   <div id="log"></div>
 </div>
 
 <div class="box">
   <strong>4. Then</strong>
-  <p>Unzip <b>portfolio-pictures.zip</b>. Inside are the folders <b>Projects PNGs</b>, <b>Certifications</b> and <b>Personal image</b> (only the ones you added), with the exact names the website expects. Upload them to GitHub, or put them next to index.html on your PC. Pictures that are not on the website yet are in a folder called <b>Not on the website yet</b>.</p>
+  <p>Unzip <b>portfolio-pictures.zip</b>. Inside are the folders <b>Projects PNGs</b>, <b>Certifications</b> and <b>Personal image</b> (only the ones you added), with the exact names the website expects. Upload them to GitHub, or put them next to index.html on your PC.</p>
+  <p><b>New, renamed or deleted pictures:</b> when you add folders, the tool also updates the website’s picture list. If something changed, the zip contains <b>assets/js/data.js</b> (also available with the “Download updated data.js” button). Put it in the website’s <b>assets/js</b> folder, replacing the old one. New projects get their folder name as title; add their details in data.js later. Pictures added one by one (without their folder) are not added to the list; they go to a folder called <b>Not on the website yet</b>.</p>
 </div>
 </main>
 
@@ -137,6 +138,7 @@ function addExpected(path) {
 function loadExpected() {
   if (typeof PROJECTS === 'undefined') return false;
   PROJECTS.forEach(function (p) {
+    (p.files || []).forEach(function (f) { addExpected('Projects PNGs/' + p.root + '/' + f.replace(/\.(png|jpe?g|webp)$/i, '')); });
     (function walk(groups) {
       groups.forEach(function (g) {
         (g.files || []).forEach(function (f) { addExpected('Projects PNGs/' + p.root + '/' + g.dir + '/' + f); });
@@ -166,6 +168,187 @@ function placeFor(rel) {
 }
 /*MATCH-END*/
 
+
+/*DATA-START*/
+/* Builds an updated picture list (data.js) from the folders you added. */
+function clone(o) { return JSON.parse(JSON.stringify(o)); }
+function ucmp(a, b) { a = a.toUpperCase(); b = b.toUpperCase(); return a < b ? -1 : a > b ? 1 : 0; }
+function stripExt(n) { return n.replace(/\.(png|jpe?g|webp)$/i, ''); }
+function collapseDoubles(folders) {
+  var out = [];
+  folders.forEach(function (f) { if (!out.length || out[out.length - 1].toLowerCase() !== f.toLowerCase()) out.push(f); });
+  return out;
+}
+/* Where a picture goes on the website (path without extension), or null if it cannot be told */
+function webPathFor(it) {
+  var segs = it.rel.split('/'), name = stripExt(segs.pop()), folders = collapseDoubles(segs);
+  if (!folders.length) return it.place.status === 'ok' ? it.place.path : null;
+  var low = folders.map(function (s) { return s.toLowerCase(); });
+  var tops = ['projects pngs', 'certifications', 'personal image'], real = ['Projects PNGs', 'Certifications', 'Personal image'];
+  for (var t = 0; t < tops.length; t++) {
+    var i = low.indexOf(tops[t]);
+    if (i >= 0) return [real[t]].concat(folders.slice(i + 1), [name]).join('/');
+  }
+  if (it.place.status === 'ok') {
+    /* the folders above the one you chose come from the website list, the rest from your PC */
+    var df = it.place.path.split('/').slice(0, -1), dl = df.map(function (s) { return s.toLowerCase(); });
+    var j = dl.indexOf(low[0]);
+    if (j < 0) j = Math.max(1, df.length - folders.length);
+    return df.slice(0, j).concat(folders, [name]).join('/');
+  }
+  var projTop = PROJECTS.map(function (p) { return p.root.split('/')[0].toLowerCase(); });
+  if (projTop.indexOf(low[0]) >= 0) return ['Projects PNGs'].concat(folders, [name]).join('/');
+  var certTop = CERTIFICATES.map(function (c) { return c.file.split('/')[0].toLowerCase(); });
+  if (certTop.indexOf(low[0]) >= 0) return ['Certifications'].concat(folders, [name]).join('/');
+  return null;
+}
+/* Folders you added completely (choosing or dropping a folder always brings everything inside it) */
+function completeFolders(it, web) {
+  var relFolders = collapseDoubles(it.rel.split('/').slice(0, -1)), wf = web.split('/').slice(0, -1), res = [];
+  var n = Math.min(relFolders.length, wf.length);
+  for (var k = wf.length - n; k < wf.length; k++) res.push(wf.slice(0, k + 1).join('/').toLowerCase());
+  return res;
+}
+function buildTree(list) {
+  var root = { name: '', files: [], subs: new Map() }, C = new Set();
+  list.forEach(function (it) {
+    if (it.rel.indexOf('/') < 0) return;           /* single pictures do not change the list */
+    var web = webPathFor(it);
+    if (!web) return;
+    completeFolders(it, web).forEach(function (f) { C.add(f); });
+    var segs = web.split('/'), name = segs.pop(), node = root;
+    segs.forEach(function (s) {
+      var k = s.toLowerCase();
+      if (!node.subs.has(k)) node.subs.set(k, { name: s, files: [], subs: new Map() });
+      node = node.subs.get(k);
+    });
+    if (!node.files.some(function (f) { return f.name.toLowerCase() === name.toLowerCase(); })) node.files.push({ name: name, orig: it.file.name });
+  });
+  return { root: root, C: C };
+}
+function allFiles(p) {
+  var out = [];
+  (function walk(gs) { gs.forEach(function (g) { (g.files || []).forEach(function (f) { out.push(g.dir + '/' + f); }); walk(g.children || []); }); })(p.groups);
+  return out;
+}
+function buildGroup(old, sub, path, parentDir, C, report, title) {
+  var name = old ? old.name : sub.name, dir = (parentDir ? parentDir + '/' : '') + name;
+  var g = { name: name, label: old ? old.label : null, dir: dir, files: [], children: [] };
+  var found = sub.files.slice().sort(function (a, b) { return ucmp(a.orig, b.orig); }).map(function (f) { return f.name; });
+  var before = old ? (old.files || []) : [];
+  var has = function (list, f) { return list.some(function (x) { return x.toLowerCase() === f.toLowerCase(); }); };
+  if (C.has(path)) {
+    g.files = found;
+    var add = found.filter(function (f) { return !has(before, f); }), del = before.filter(function (b) { return !has(found, b); });
+    if (old && add.length) report.push(title + ' / ' + dir + ': added ' + add.join(', '));
+    if (old && del.length) report.push(title + ' / ' + dir + ': removed ' + del.join(', '));
+  } else {
+    g.files = before.slice();
+    found.forEach(function (f) { if (!has(g.files, f)) { g.files.push(f); report.push(title + ' / ' + dir + ': added ' + f); } });
+  }
+  g.children = mergeGroups(old ? (old.children || []) : [], sub, path, dir, C.has(path), C, report, title, !old);
+  return g;
+}
+function mergeGroups(oldGroups, node, path, parentDir, nodeComplete, C, report, title, quiet) {
+  var res = [], used = {};
+  oldGroups.forEach(function (g) {
+    var k = g.name.toLowerCase(), sub = node.subs.get(k);
+    if (sub) { used[k] = true; res.push(buildGroup(g, sub, path + '/' + k, parentDir, C, report, title)); }
+    else if (nodeComplete) report.push(title + ': folder removed: ' + (parentDir ? parentDir + '/' : '') + g.name);
+    else res.push(g);
+  });
+  Array.from(node.subs.keys()).filter(function (k) { return !used[k]; }).sort(ucmp).forEach(function (k) {
+    var sub = node.subs.get(k);
+    if (!quiet) report.push(title + ': new folder: ' + (parentDir ? parentDir + '/' : '') + sub.name);
+    res.push(buildGroup(null, sub, path + '/' + k, parentDir, C, report, title));
+  });
+  /* a folder you added completely keeps the same order as on your PC */
+  if (nodeComplete) res.sort(function (a, b) { return ucmp(a.name, b.name); });
+  return res;
+}
+function buildProject(old, node, path, C, report) {
+  var p = old ? clone(old) : { title: node.name, root: node.name, place: '', company: '', role: [], summary: '', tags: [], cover: '', groups: [] };
+  p.root = old ? old.root.split('/')[0] : node.name;
+  p.groups = mergeGroups(old ? old.groups : [], node, path, '', C.has(path), C, report, p.title, !old);
+  /* pictures directly in the project folder (e.g. "ASTER Cover") */
+  var rootFound = node.files.slice().sort(function (a, b) { return ucmp(a.orig, b.orig); }).map(function (f) { return f.name; });
+  var rootBefore = (old ? (old.files || []) : []).map(stripExt), same = function (a, b) { return stripExt(a).toLowerCase() === stripExt(b).toLowerCase(); };
+  if (C.has(path)) {
+    rootFound.filter(function (f) { return !rootBefore.some(function (b) { return same(b, f); }); }).forEach(function (f) { if (old) report.push(p.title + ': added ' + f + ' (project folder)'); });
+    rootBefore.filter(function (b) { return !rootFound.some(function (f) { return same(b, f); }); }).forEach(function (b) { report.push(p.title + ': removed ' + b + ' (project folder)'); });
+    p.files = rootFound;
+  } else {
+    p.files = (old && old.files) ? old.files.slice() : [];
+    rootFound.forEach(function (f) { if (!p.files.some(function (b) { return same(b, f); })) { p.files.push(f); report.push(p.title + ': added ' + f + ' (project folder)'); } });
+  }
+  if (!p.files.length) delete p.files;
+  var rootCover = (p.files || []).filter(function (f) { return /cover/i.test(f); })[0];
+  var files = allFiles(p).concat(p.files || []);
+  if (rootCover) p.cover = rootCover;
+  else if (!files.some(function (f) { return same(f, String(p.cover)); })) p.cover = allFiles(p)[0] || '';
+  return p;
+}
+function buildCerts(old, node, C, report) {
+  var found = [];
+  (function walk(n, prefix) {
+    n.files.slice().sort(function (a, b) { return ucmp(a.orig, b.orig); }).forEach(function (f) { found.push({ title: f.name, issuer: n.name, file: prefix + f.name }); });
+    Array.from(n.subs.keys()).sort(ucmp).forEach(function (k) { var s = n.subs.get(k); walk(s, prefix + s.name + '/'); });
+  })(node, '');
+  var res = [];
+  old.forEach(function (c) {
+    var f = found.filter(function (x) { return x.file.toLowerCase() === c.file.toLowerCase(); })[0];
+    var folder = ('certifications/' + c.file.split('/').slice(0, -1).join('/')).replace(/\/$/, '').toLowerCase();
+    if (f) { f.used = true; res.push(c); }
+    else if (C.has(folder)) report.push('Certificate removed: ' + c.title);
+    else res.push(c);
+  });
+  found.filter(function (f) { return !f.used; }).forEach(function (f) { res.push({ title: f.title, issuer: f.issuer, file: f.file }); report.push('New certificate: ' + f.title + ' (' + f.issuer + ')'); });
+  return res;
+}
+function buildData(list) {
+  var t = buildTree(list), C = t.C, report = [];
+  var projects = clone(PROJECTS), certs = clone(CERTIFICATES);
+  var pn = t.root.subs.get('projects pngs');
+  if (pn) {
+    var seen = {}, keyOf = function (p) { return p.root.split('/')[0].toLowerCase(); }, taken = {};
+    pn.subs.forEach(function (node, key) { if (projects.some(function (p) { return keyOf(p) === key; })) taken[key] = true; });
+    var nodeNames = function (n) { var out = []; (function w(x) { x.files.forEach(function (f) { out.push(f.name.toLowerCase()); }); x.subs.forEach(w); })(n); return out; };
+    pn.subs.forEach(function (node, key) {
+      seen[key] = true;
+      var idx = -1;
+      projects.forEach(function (p, i) { if (keyOf(p) === key) idx = i; });
+      if (idx < 0) {
+        /* not found by name: maybe the folder was renamed - pick the old project sharing most pictures */
+        var names = nodeNames(node), best = 0;
+        projects.forEach(function (p, i) {
+          if (taken[keyOf(p)] || pn.subs.has(keyOf(p))) return;
+          var mine = allFiles(p).map(function (f) { return f.split('/').pop().toLowerCase(); });
+          var score = names.filter(function (n) { return mine.indexOf(n) >= 0; }).length;
+          if (score > best) { best = score; idx = i; }
+        });
+        if (idx >= 0) { taken[keyOf(projects[idx])] = true; seen[keyOf(projects[idx])] = true; report.push(projects[idx].title + ': project folder renamed to "' + node.name + '"'); }
+      }
+      var p = buildProject(idx >= 0 ? projects[idx] : null, node, 'projects pngs/' + key, C, report);
+      p.root = node.name;
+      if (idx >= 0) projects[idx] = p; else { projects.push(p); report.push('New project: ' + p.title); }
+    });
+    if (C.has('projects pngs')) projects = projects.filter(function (p) {
+      var k = p.root.split('/')[0].toLowerCase();
+      if (!seen[k]) report.push('Project removed (folder not found): ' + p.title);
+      return seen[k];
+    });
+  }
+  var cn = t.root.subs.get('certifications');
+  if (cn) certs = buildCerts(certs, cn, C, report);
+  var changed = JSON.stringify(projects) !== JSON.stringify(PROJECTS) || JSON.stringify(certs) !== JSON.stringify(CERTIFICATES);
+  return { projects: projects, certs: certs, report: report, changed: changed };
+}
+var DATA_HEADER = "/* =====================================================================\n   DATA FILE - edit this file to change pictures and project details.\n   Every path is relative to index.html, so this folder works under any\n   repository name, in any sub-folder, or on any hosting service.\n\n   The picture folders and the file type are set in assets/js/config.js.\n   Folder names and file names must match exactly (capital letters, spaces).\n   This list can be updated automatically by tools/shrink-pictures.html.\n   ===================================================================== */\n\n/* Projects. Each project window mirrors its folder tree:\n   groups = sub-folders, children = folders inside a sub-folder, files = pictures (without the extension).\n   place / company / role are optional: leave '' or [] to hide them. */\n";
+function dataJs(projects, certs) {
+  return DATA_HEADER + 'var PROJECTS = ' + JSON.stringify(projects, null, 1) + ';\n\n/* Certificates: title, issuer (folder name) and picture path inside the certificates folder (without the extension). */\nvar CERTIFICATES = ' + JSON.stringify(certs, null, 1) + ';\n';
+}
+/*DATA-END*/
+
 var HAVE_DATA = loadExpected();
 var items = [], seen = {};
 function $(id) { return document.getElementById(id); }
@@ -189,11 +372,12 @@ function addFiles(list) {
 function showSummary() {
   var ok = items.filter(function (i) { return i.place.status === 'ok'; });
   var other = items.filter(function (i) { return i.place.status === 'other'; });
+  var placedNew = other.filter(function (i) { return HAVE_DATA && webPathFor(i); });
   var unclear = items.filter(function (i) { return i.place.status === 'unclear'; });
   var size = items.reduce(function (s, i) { return s + i.file.size; }, 0);
   $('summary').textContent = items.length
     ? items.length + ' pictures added (' + mb(size) + ' MB): ' + ok.length + ' placed in their website folders' +
-      (other.length ? ', ' + other.length + ' not on the website yet' : '') + (unclear.length ? ', ' + unclear.length + ' unclear (skipped, see below)' : '') + '.'
+      (placedNew.length ? ', ' + placedNew.length + ' new (will be added to the website list)' : '') + (other.length - placedNew.length ? ', ' + (other.length - placedNew.length) + ' not on the website yet' : '') + (unclear.length ? ', ' + unclear.length + ' unclear (skipped, see below)' : '') + '.'
     : 'No pictures added yet.';
   $('log').textContent = '';
   if (!HAVE_DATA) log('Note: assets/js/data.js was not found. Keep this tool inside the Portfolio "tools" folder so it can place the pictures.');
@@ -303,7 +487,7 @@ function shrink(file, o) {
 
 $('go').onclick = async function () {
   var todo = items.filter(function (i) { return i.place.status !== 'unclear'; });
-  $('go').disabled = true; $('dl').hidden = true;
+  $('go').disabled = true; $('dl').hidden = true; $('dlData').hidden = true;
   var o = { dpi: +$('dpi').value, assume: +$('assume').value, maxSide: +$('max').value, q: $('q').value / 100 };
   var zip = new ZipWriter(), before = 0, after = 0, done = 0, failed = 0, dpis = {};
   $('bar').max = todo.length; $('bar').value = 0;
@@ -312,7 +496,8 @@ $('go').onclick = async function () {
     $('status').textContent = 'Working on ' + (i + 1) + ' of ' + todo.length + ': ' + x.rel;
     try {
       var r = await shrink(x.file, o);
-      var name = x.place.status === 'ok' ? x.place.path + EXT : 'Not on the website yet/' + x.rel.replace(/\.(png|jpe?g)$/i, EXT);
+      var wp = HAVE_DATA ? webPathFor(x) : null;
+      var name = wp ? wp + EXT : 'Not on the website yet/' + x.rel.replace(/\.(png|jpe?g)$/i, EXT);
       zip.add(name, r.data);
       var k = r.dpi ? r.dpi + ' DPI' : 'no DPI saved';
       dpis[k] = (dpis[k] || 0) + 1;
@@ -320,6 +505,18 @@ $('go').onclick = async function () {
     } catch (e) { failed++; log('Could not convert: ' + x.rel); }
     $('bar').value = i + 1;
     await new Promise(function (res) { setTimeout(res, 0); });
+  }
+  if (HAVE_DATA) {
+    var nd = buildData(items);
+    if (nd.changed) {
+      var js = dataJs(nd.projects, nd.certs);
+      zip.add('assets/js/data.js', new TextEncoder().encode(js));
+      var b = $('dlData');
+      b.href = URL.createObjectURL(new Blob([js], { type: 'text/javascript' })); b.download = 'data.js'; b.hidden = false;
+      log('Website picture list updated (' + nd.report.length + ' change' + (nd.report.length === 1 ? '' : 's') + '):');
+      nd.report.slice(0, 60).forEach(function (r) { log('  ' + r); });
+      if (nd.report.length > 60) log('  ...and ' + (nd.report.length - 60) + ' more');
+    } else { $('dlData').hidden = true; log('Website picture list: no changes needed.'); }
   }
   var a = $('dl');
   a.href = URL.createObjectURL(zip.finish()); a.download = 'portfolio-pictures.zip'; a.hidden = false;
